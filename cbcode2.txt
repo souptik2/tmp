@@ -1,0 +1,227 @@
+package xapi_poc;
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.Properties;
+
+import java.util.HashMap;
+
+import java.util.logging.Level; 
+import java.util.logging.Logger; 
+import java.util.logging.*;
+
+public class CircuitBreaker {
+	static Logger logger = Logger.getLogger(CircuitBreaker.class.getName());
+
+	 private String filePath;
+	 private Properties properties;
+
+	    // Constructor that accepts file path and name
+	 private CircuitBreaker(String filePath) {
+	        this.filePath = filePath;
+	        this.properties = new Properties();
+	        loadProperties();
+	    }
+
+	 private void loadProperties() {
+        try (FileInputStream in = new FileInputStream(filePath)) {
+            properties.load(in);
+        } catch (IOException e) {
+            // File may not exist, which is fine
+        }
+    }
+
+	 private void saveProperties() {
+        try (FileOutputStream out = new FileOutputStream(filePath)) {
+            properties.store(out, null);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+	 private void put(String key, String value) {
+        properties.setProperty(key, value);
+        saveProperties();
+    }
+
+	 private String get(String key) {
+        return properties.getProperty(key);
+    }
+
+	 private void update(String key, String newValue) {
+        if (properties.containsKey(key)) {
+            properties.setProperty(key, newValue);
+            saveProperties();
+        } else {
+            logger.info("Key does not exist.");
+        }
+    }
+
+	 private void delete(String key) {
+        if (properties.containsKey(key)) {
+            properties.remove(key);
+            saveProperties();
+            logger.info("Key deleted successfully.");
+        } else {
+            logger.info("Key does not exist.");
+        }
+    }
+
+    public static void main(String[] args) {
+    	//CircuitBreaker store = new CircuitBreaker();
+        
+        // Example usage
+        //store.put("data1", "exampleValue");
+       //logger.info("Stored value: " + store.get("data1"));
+        
+        // Update value
+       // store.update("exampleKey", "112|322|34");
+      // logger.info("Updated value: " + store.get("exampleKey"));
+        
+        // Delete key
+        //store.delete("exampleKey");
+        //logger.info("Deleted value: " + store.get("exampleKey")); // Should print null
+    	
+    	Object asd=cbCheck("D:/huon_archive/","data3",4,200000,120000);
+    	System.out.println(asd);
+    }
+    
+    public static HashMap<String, String> cbCheck(String path, String key, long errorcount, long OCD, long TTR) {
+    	CircuitBreaker store = new CircuitBreaker(path+"/cb_value_store.properties");
+    	//CircuitBreaker store = new CircuitBreaker("cb_value_store.properties");
+    	long MEC=errorcount;
+    	String defltkeyvalue=0 + "|" + MEC + "|" + OCD + "|" + TTR + "|" + 0 + "|" + 0 + "|" + "closed";
+    	String updatedkeyvalue="";
+    	HashMap<String, String> response = new HashMap<String, String>();
+    	
+    	try {
+    	if(store.get(key)== null) {
+    		store.put(key, defltkeyvalue);
+    		response.put("state","closed");
+    		response.put("response","created property for key: " +key);
+    	}
+    	else {
+    		String keyvalue=store.get(key);
+    		
+    		String[] splitvalues=keyvalue.split("\\|");
+    		long counter=Long.parseLong(splitvalues[0]);
+    		long mec=Long.parseLong(splitvalues[1]);
+    		long ocd=Long.parseLong(splitvalues[2]);
+    		long ttr=Long.parseLong(splitvalues[3]);
+    		long fet=Long.parseLong(splitvalues[4]);
+    		long let=Long.parseLong(splitvalues[5]);
+    		String state=splitvalues[6];
+    		
+    		if(System.currentTimeMillis()-fet >= ttr) {
+    			updatedkeyvalue=0 + "|" + mec + "|" + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|closed";
+				store.update(key, updatedkeyvalue);
+				response.put("state","closed");
+	    		response.put("response","Threshold time to check for error count exceeded, Resetting the circuit breaker for key: "+key);
+    		}
+    		
+    		else if(counter < errorcount) {
+    			response.put("state","closed");
+        		response.put("response","continue normal execution");
+        		}
+    		
+    		else if(counter >= errorcount) {
+    			
+    			if(System.currentTimeMillis() - let < ocd) {
+    					updatedkeyvalue=counter + "|" + mec + "|"  + ocd + "|" + ttr + "|" + fet + "|" + let + "|open";
+    	    			store.update(key, updatedkeyvalue);
+    			
+    				response.put("state","open");
+    	    		response.put("response","execution is stopped for key: " +key + " for duration: " + (System.currentTimeMillis() - let)/1000 + " s");
+    			}
+    			else if(System.currentTimeMillis() - let >= ocd) {
+    		
+    				store.update(key, defltkeyvalue);
+    				response.put("state","closed");
+    	    		response.put("response","execution started for key: " +key + " since the open circuit duration is completed");
+    			}
+    			
+    		}
+    		
+    	}
+    	}catch(Exception e) {
+    		response.put("state","unknown");
+    		response.put("response",e.getMessage());
+    	}
+    	return response;
+    }
+    
+    public static void cbIncriment(String path,String key, long incriment){
+    	CircuitBreaker store = new CircuitBreaker(path+"/cb_value_store.properties");
+    	//CircuitBreaker store = new CircuitBreaker("cb_value_store.properties");
+      	String updatedkeyvalue="";
+    	if(store.get(key)== null) {
+    		logger.info("Could not find the key: " +key);
+
+    	}else {
+    		String keyvalue=store.get(key);
+    		
+    		String[] splitvalues=keyvalue.split("\\|");
+    		long counter=Long.parseLong(splitvalues[0]);
+    		long mec=Long.parseLong(splitvalues[1]);
+    		long ocd=Long.parseLong(splitvalues[2]);
+    		long ttr=Long.parseLong(splitvalues[3]);
+    		long fet=Long.parseLong(splitvalues[4]);
+    		long let=Long.parseLong(splitvalues[5]);
+    		String state=splitvalues[6];
+    		
+    		if(fet == 0) {
+    			updatedkeyvalue = Long.sum(counter, incriment) + "|" + mec + "|" + ocd + "|" + ttr + "|" + System.currentTimeMillis() + "|" + System.currentTimeMillis() + "|" + state;
+    			store.update(key, updatedkeyvalue);
+    			logger.info("Counter incrimented and first error time is set, counter is : " +counter + " out of " +mec);
+
+    		}
+    		else {
+    			updatedkeyvalue = Long.sum(counter, incriment) + "|" + mec + "|" + ocd + "|" + ttr + "|" + fet + "|" + System.currentTimeMillis() + "|" + state;
+    			store.update(key, updatedkeyvalue);
+    			logger.info("Counter incrimented, counter is :" +counter + " out of " +mec);
+    		}
+    	}
+    	
+    	}
+    
+    public static void cbResetKey(String path,String key){
+    	CircuitBreaker store = new CircuitBreaker(path.replace("\\", "/")+"/cb_value_store.properties");
+    	//CircuitBreaker store = new CircuitBreaker("cb_value_store.properties");
+    	
+    	if(store.get(key)== null) {
+    		logger.info("Could not find the key: " +key);
+
+    	}else {
+    		
+    		String keyvalue=store.get(key);
+    		
+    		String[] splitvalues=keyvalue.split("\\|");
+    		
+    		long ocd=Long.parseLong(splitvalues[2]);
+    		long ttr=Long.parseLong(splitvalues[3]);
+    		
+    		String defltkeyvalue=0 + "|" + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|" + "closed";
+    		store.update(key, defltkeyvalue);
+    		
+    	}
+    	
+    }
+    
+  public static void cbDeleteKey(String path,String key){
+	  CircuitBreaker store = new CircuitBreaker(path.replace("\\", "/")+"/cb_value_store.properties");
+	  //CircuitBreaker store = new CircuitBreaker("cb_value_store.properties");
+    	
+    	if(store.get(key)== null) {
+    		logger.info("Could not find a key: " +key);
+
+    	}else {
+    		
+    		store.delete(key);
+    		
+    	}
+    	
+    }
+  
+ 
+   }
