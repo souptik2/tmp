@@ -1,0 +1,343 @@
+package mule.Demo.connectors.internal;
+
+import static org.mule.runtime.extension.api.annotation.param.MediaType.ANY;
+
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Properties;
+
+
+import org.mule.runtime.extension.api.annotation.Alias;
+import org.mule.runtime.extension.api.annotation.param.MediaType;
+import org.mule.runtime.extension.api.annotation.param.Optional;
+import org.mule.runtime.extension.api.annotation.param.display.Summary;
+
+import mule.Demo.connectors.internal.*;
+
+import java.util.logging.Logger; 
+
+
+
+
+/**
+ * This class is a container for operations, every public method in this class will be taken as an extension operation.
+ */
+public class CircuitbreakerOperations {
+	//private static final Logger logger = LoggerFactory.getLogger(CircuitbreakerOperations.class);
+	
+	static Logger logger = Logger.getLogger(CircuitbreakerOperations.class.getName());
+
+	 private String filePath;
+	 private Properties properties;
+
+	    // Constructor that accepts file path and name
+	 private CircuitbreakerOperations(String filePath) {
+	        this.filePath = filePath;
+	        this.properties = new Properties();
+	        loadProperties();
+	    }
+
+   private void loadProperties() {
+       try (FileInputStream in = new FileInputStream(filePath)) {
+           properties.load(in);
+       } catch (IOException e) {
+           // File may not exist, which is fine
+       }
+   }
+
+   private void saveProperties() {
+       try (FileOutputStream out = new FileOutputStream(filePath)) {
+           properties.store(out, null);
+       } catch (IOException e) {
+           e.printStackTrace();
+       }
+   }
+
+   private void put(String key, String value) {
+       properties.setProperty(key, value);
+       saveProperties();
+   }
+   
+   private String get(String key) {
+       return properties.getProperty(key);
+   }
+
+   private void update(String key, String newValue) {
+       if (properties.containsKey(key)) {
+           properties.setProperty(key, newValue);
+           saveProperties();
+       } else {
+           logger.info("Key does not exist.");
+       }
+   }
+
+   private void delete(String key) {
+       if (properties.containsKey(key)) {
+           properties.remove(key);
+           saveProperties();
+           logger.info("Key deleted successfully.");
+       } else {
+           logger.info("Key does not exist.");
+       }
+   }
+	
+	
+	
+	
+	
+	
+	
+  /**
+   * Determines the execution flow state i.e. whether closed, meaning normal execution to occur OR open, meaning normal execution is to be stopped.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Determines the execution flow state i.e. whether closed, meaning normal execution to occur OR open, meaning normal execution is to be stopped.")
+  public static HashMap<String, String> CircuitbreakerCheck(@Alias("Path") @Optional @Summary("Path to store key property") String path, @Alias("Key") @Summary("Unique Key") String key,@Alias("Count") @Summary("maximum error count") long errorcount,@Alias("TimeUnit") @Optional(defaultValue = "ms") ExtValueProvider timeunit, @Alias("OCD") @Summary("Open circuit duration (in ms)") long OCD,@Alias("TTR")@Summary("Time to restet (in ms)") long TTR) {
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	
+  	long MEC=errorcount;
+  	String defltkeyvalue=0 + "|" + MEC + "|" + convertToMilliseconds(OCD,timeunit.toString()) + "|" + convertToMilliseconds(TTR,timeunit.toString()) + "|" + 0 + "|" + 0 + "|" + "closed";
+  	String updatedkeyvalue="";
+  	HashMap<String, String> response = new HashMap<String, String>();
+  	
+  	try {
+  	if(store.get(key)== null) {
+  		store.put(key, defltkeyvalue);
+  		response.put("state","closed");
+  		response.put("response","created property for key: " +key);
+  	}
+  	else {
+  		String keyvalue=store.get(key);
+  		
+  		String[] splitvalues=keyvalue.split("\\|");
+  		long counter=Long.parseLong(splitvalues[0]);
+  		long mec=Long.parseLong(splitvalues[1]);
+  		long ocd=Long.parseLong(splitvalues[2]);
+  		long ttr=Long.parseLong(splitvalues[3]);
+  		long fet=Long.parseLong(splitvalues[4]);
+  		long let=Long.parseLong(splitvalues[5]);
+  		String state=splitvalues[6];
+  		
+  		if(System.currentTimeMillis()-fet >= ttr) {
+  			updatedkeyvalue=0 + "|" + mec + "|" + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|closed";
+				store.update(key, updatedkeyvalue);
+				response.put("state","closed");
+	    		response.put("response","Threshold time to check for error count exceeded, Resetting the circuit breaker for key: "+key);
+  		}
+  		
+  		else if(counter < errorcount) {
+  			response.put("state","closed");
+      		response.put("response","continue normal execution");
+      		}
+  		
+  		else if(counter >= errorcount) {
+  			
+  			if(System.currentTimeMillis() - let < ocd) {
+  					updatedkeyvalue=counter + "|" + mec + "|"  + ocd + "|" + ttr + "|" + fet + "|" + let + "|open";
+  	    			store.update(key, updatedkeyvalue);
+  			
+  				response.put("state","open");
+  	    		response.put("response","execution is stopped for key: " +key + " for duration: " + (System.currentTimeMillis() - let)/1000 + " s");
+  			}
+  			else if(System.currentTimeMillis() - let >= ocd) {
+  		
+  				store.update(key, defltkeyvalue);
+  				response.put("state","closed");
+  	    		response.put("response","execution started for key: " +key + " since the open circuit duration is completed");
+  			}
+  			
+  		}
+  		
+  	}
+  	}catch(Exception e) {
+  		response.put("state","unknown");
+  		response.put("response",e.getMessage());
+  	}
+  	return response;
+  }
+  
+  /**
+   * Incriment the counter value.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Incriment the counter value")
+  public static void Increment(@Alias("Path") @Optional @Summary("Path to key property") String path,@Alias("Key") @Summary("Given Key")String key,@Alias("Incriment") @Summary("Incrimental value") long incriment){
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	//CircuitBreaker store = new CircuitBreaker("cb_value_store.properties");
+    	String updatedkeyvalue="";
+  	if(store.get(key)== null) {
+  		logger.warning("Could not find the key: " +key);
+
+  	}else {
+  		String keyvalue=store.get(key);
+  		
+  		String[] splitvalues=keyvalue.split("\\|");
+  		long counter=Long.parseLong(splitvalues[0]);
+  		long mec=Long.parseLong(splitvalues[1]);
+  		long ocd=Long.parseLong(splitvalues[2]);
+  		long ttr=Long.parseLong(splitvalues[3]);
+  		long fet=Long.parseLong(splitvalues[4]);
+  		long let=Long.parseLong(splitvalues[5]);
+  		String state=splitvalues[6];
+  		
+  		if(fet == 0) {
+  			updatedkeyvalue = Long.sum(counter, incriment) + "|" + mec + "|" + ocd + "|" + ttr + "|" + System.currentTimeMillis() + "|" + System.currentTimeMillis() + "|" + state;
+  			store.update(key, updatedkeyvalue);
+  			logger.info("Counter incrimented and first error time is set, counter is : " +counter + " out of " +mec);
+
+  		}
+  		else {
+  			updatedkeyvalue = Long.sum(counter, incriment) + "|" + mec + "|" + ocd + "|" + ttr + "|" + fet + "|" + System.currentTimeMillis() + "|" + state;
+  			store.update(key, updatedkeyvalue);
+  			logger.info("Counter incrimented, counter is :" +counter + " out of " +mec);
+  		}
+  	}
+  }
+  	
+  
+  
+  /**
+   * Reseted the counter value.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Reseted the counter value")
+  public static void Reset(@Alias("Path") @Optional @Summary("Path to key property") String path,@Alias("Key") @Summary("Key to reset")String key){
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	
+  	if(store.get(key)== null) {
+  		logger.warning("Could not find the key: " +key);
+
+  	}else {
+  		
+  		String keyvalue=store.get(key);
+  		
+  		String[] splitvalues=keyvalue.split("\\|");
+  		
+  		long mec=Long.parseLong(splitvalues[1]);
+  		long ocd=Long.parseLong(splitvalues[2]);
+  		long ttr=Long.parseLong(splitvalues[3]);
+  		
+  		String defltkeyvalue=0 + "|" + mec + "|" + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|" + "closed";
+  
+  		store.update(key, defltkeyvalue);
+  		
+  	}
+  	
+  }
+ 
+  /**
+   * Deleted the key.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Delete the key")  
+public static void Delete(@Alias("Path") @Optional @Summary("Path to key property") String path,@Alias("Key") @Summary("Key to delete")String key){
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	
+  	if(store.get(key)== null) {
+  		logger.warning("Could not find a key: " +key);
+
+  	}else {
+  		
+  		store.delete(key);
+  		logger.info("Deleted the key: " +key);
+  		
+  	}
+  }
+  	
+  	/**
+     * Update the key.
+     */
+    @MediaType(value = ANY, strict = false)
+    @Summary("Update the key")  
+  public static void Update(@Alias("Path") @Optional @Summary("Path to store key property") String path, @Alias("Key") @Summary("Unique Key") String key,@Alias("Count") @Optional @Summary("maximum error count") long errorcount,@Alias("OCD") @Optional @Summary("Open circuit duration") long OCD, @Optional @Alias("TTR")@Summary("Time to restet") long TTR){
+    	CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+    	
+    	if(store.get(key)== null) {
+    		logger.warning("Could not find a key: " +key);
+
+    	}else {
+    		
+    		String keyvalue=store.get(key);
+      		
+    		String[] splitvalues=keyvalue.split("\\|");
+    		long counter=Long.parseLong(splitvalues[0]);
+      		long mec=Long.parseLong(splitvalues[1]);
+      		long ocd=Long.parseLong(splitvalues[2]);
+      		long ttr=Long.parseLong(splitvalues[3]);
+      		long fet=Long.parseLong(splitvalues[4]);
+      		long let=Long.parseLong(splitvalues[5]);
+      		String state=splitvalues[6];
+      		
+      		String updatedkey=counter + "|" + UpdateUtil(mec,errorcount) + "|" + UpdateUtil(ocd,OCD) + "|" + UpdateUtil(ttr,TTR) + "|" + fet + "|" + let + "|" + state;
+      		
+      		store.update(key, updatedkey);
+    		
+    	}
+  	
+  }
+ 
+  
+  /*
+   * Utility methods
+   * 
+   * */
+  
+// Update current value with new value
+    
+    public static Long UpdateUtil(Long oldVal, Long newVal) {
+        if (newVal == null || newVal.equals(oldVal)) {
+            return oldVal;
+        }
+        return newVal;
+    }
+    
+    
+    
+    
+    
+    
+// Converts the given time value to milliseconds based on the specified time unit.
+  
+  private static long convertToMilliseconds(long timeValue, String timeUnit) {
+      switch (timeUnit.toLowerCase()) {
+          case "ms":
+              return timeValue;
+          case "s":
+              return timeValue * 1000;
+          case "min":
+              return timeValue * 60 * 1000;
+          case "hours":
+              return timeValue * 60 * 60 * 1000;
+          case "days":
+              return timeValue * 24 * 60 * 60 * 1000;
+          default:
+              throw new IllegalArgumentException("Invalid time unit: " + timeUnit);
+      }
+  }
+  
+  // Converts milliseconds to a formatted string in the format DD:HH:MM:MS
+  
+  private static String convertToFormattedString(long milliseconds) {
+      long totalSeconds = milliseconds / 1000;
+      long ms = milliseconds % 1000;
+      
+      long days = totalSeconds / (24 * 3600);
+      totalSeconds %= (24 * 3600);
+      
+      long hours = totalSeconds / 3600;
+      totalSeconds %= 3600;
+      
+      long minutes = totalSeconds / 60;
+      long seconds = totalSeconds % 60;
+      
+      // Format milliseconds
+      ms = ms / 10; // Convert milliseconds to tenths of a second for a more readable format
+      
+      // Format the result as DD:HH:MM:MS
+      return String.format("%02d:%02d:%02d:%02d", days, hours, minutes, ms);
+  }
+  
+}
