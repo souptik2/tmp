@@ -1,0 +1,409 @@
+package mule.Demo.connectors.internal;
+
+import static org.mule.runtime.extension.api.annotation.param.MediaType.ANY;
+
+
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Properties;
+
+import org.mule.runtime.api.meta.model.display.PathModel.Location;
+import org.mule.runtime.extension.api.annotation.Alias;
+import org.mule.runtime.extension.api.annotation.param.MediaType;
+import org.mule.runtime.extension.api.annotation.param.Optional;
+import org.mule.runtime.extension.api.annotation.param.display.Path;
+import org.mule.runtime.extension.api.annotation.param.display.Summary;
+
+
+
+import java.util.logging.Logger; 
+
+
+
+
+/**
+ * This class is a container for operations, every public method in this class will be taken as an extension operation.
+ * 
+ * Author: Souptik Das
+ * Feel free to criticize: souptikdas2@gmail.com
+ * 
+ */
+public class CircuitbreakerOperations {
+	//private static final Logger logger = LoggerFactory.getLogger(CircuitbreakerOperations.class);
+	
+	static Logger logger = Logger.getLogger(CircuitbreakerOperations.class.getName());
+
+	 private String filePath;
+	 private Properties properties;
+	 
+	// Public no-argument constructor required for MuleSoft extensions
+	    public CircuitbreakerOperations() {
+	        this.filePath = "default/path/to/cb_value_store.properties";  // You can set a default path here
+	        this.properties = new Properties();
+	        loadProperties();
+	    }
+
+	    // Constructor that accepts file path and name
+	 private CircuitbreakerOperations(String filePath) {
+	        this.filePath = filePath;
+	        this.properties = new Properties();
+	        loadProperties();
+	    }
+
+   private void loadProperties() {
+       try (FileInputStream in = new FileInputStream(filePath)) {
+           properties.load(in);
+       } catch (IOException e) {
+           // File may not exist, which is fine
+       }
+   }
+
+   private void saveProperties() {
+       try (FileOutputStream out = new FileOutputStream(filePath)) {
+           properties.store(out, null);
+       } catch (IOException e) {
+           e.printStackTrace();
+       }
+   }
+
+   private void put(String key, String value) {
+       properties.setProperty(key, value);
+       saveProperties();
+   }
+   
+   private String get(String key) {
+       return properties.getProperty(key);
+   }
+
+   private void update(String key, String newValue) {
+       if (properties.containsKey(key)) {
+           properties.setProperty(key, newValue);
+           saveProperties();
+       } else {
+           logger.info("Key does not exist.");
+       }
+   }
+   
+   private long updateincheck(String key, String newValue, long updatedval) {
+       if (properties.containsKey(key)) {
+           properties.setProperty(key, newValue);
+           saveProperties();
+       } else {
+           logger.info("Key does not exist.");
+       }
+       return updatedval;
+   }
+   
+
+   private void delete(String key) {
+       if (properties.containsKey(key)) {
+           properties.remove(key);
+           saveProperties();
+           logger.info("Key deleted successfully.");
+       } else {
+           logger.info("Key does not exist.");
+       }
+   }
+
+	
+	
+	
+	
+	
+	
+  /**
+   * Determines the execution flow state i.e. whether closed, meaning normal execution to occur OR open, meaning normal execution is to be stopped.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Determines the execution state i.e. whether closed state,i.e. normal execution is to occur OR open state,i.e. normal execution is to be stopped.")
+  public HashMap<String, String> CircuitbreakerCheck(@Alias("Path") @Path(location = Location.ANY) @Summary("Path to store circuitbreaker key property") String path, @Alias("Key") @Summary("Unique Key") String key,@Alias("MaximumErrorCount") @Summary("maximum error count") long errorcount,@Alias("TimeUnit") @Optional(defaultValue = "Miliseconds") ExtValueProvider timeunit, @Alias("OpenCircuitDuration") @Summary("Open circuit duration: The duration for which the circuit remains open (does not execute) after the max error threshold is reached, provide the value -1 to dissable the circuit to close again") long OCD,@Alias("TimeToReset")@Summary("Time to restet: Reset the key with the default values after the TTR duration is reached, will not reset if the state is open") long TTR) {
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	
+  	long MEC=errorcount;
+  	String defltkeyvalue=0 + "|" + MEC + "|" + convertToMilliseconds(OCD,timeunit.getextsn()) + "|" + convertToMilliseconds(TTR,timeunit.getextsn()) + "|" + 0 + "|" + 0 + "|" + "closed";
+  	String updatedkeyvalue="";
+  	HashMap<String, String> response = new HashMap<String, String>();
+  	
+  	try {
+  	if(store.get(key)== null) {
+  		store.put(key, defltkeyvalue);
+  		response.put("state","closed");
+  		response.put("response","created property for key: " +key);
+  	}
+  	else {
+  		String keyvalue=store.get(key);
+  		
+  		String[] splitvalues=keyvalue.split("\\|");
+  		long counter=Long.parseLong(splitvalues[0]);
+  		long mecA=Long.parseLong(splitvalues[1]);
+  		long ocdA=Long.parseLong(splitvalues[2]);
+  		long ttrA=Long.parseLong(splitvalues[3]);
+  		long fet=Long.parseLong(splitvalues[4]);
+  		long let=Long.parseLong(splitvalues[5]);
+  		String state=splitvalues[6];
+  		
+  		
+  		//Update the value in cb check itself
+  		long mec=(mecA == MEC)? mecA : store.updateincheck(key, counter + "|" + MEC + "|" + ((OCD==-1)?-1:convertToMilliseconds(OCD,timeunit.getextsn())) + "|" + convertToMilliseconds(TTR,timeunit.getextsn()) + "|" + fet + "|" + let + "|" + state,MEC);
+  		long ocd=(ocdA == ((OCD == -1)?-1:convertToMilliseconds(OCD,timeunit.getextsn())))? ocdA : store.updateincheck(key, counter + "|" + MEC + "|" + ((OCD==-1)?-1:convertToMilliseconds(OCD,timeunit.getextsn())) + "|" + convertToMilliseconds(TTR,timeunit.getextsn()) + "|" + fet + "|" + let + "|" + state,((OCD==-1)?-1:convertToMilliseconds(OCD,timeunit.getextsn())));
+  		long ttr=(ttrA == convertToMilliseconds(TTR,timeunit.getextsn()))? ttrA : store.updateincheck(key, counter + "|" + MEC + "|" + ((OCD==-1)?-1:convertToMilliseconds(OCD,timeunit.getextsn())) + "|" + convertToMilliseconds(TTR,timeunit.getextsn()) + "|" + fet + "|" + let + "|" + state,convertToMilliseconds(TTR,timeunit.getextsn()));
+  		
+  		
+  		if(fet > 0 && System.currentTimeMillis()-fet >= ttr && state.equals("closed")) {
+  			updatedkeyvalue=0 + "|" + mec + "|" + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|closed";
+				store.update(key, updatedkeyvalue);
+				response.put("state","closed");
+	    		response.put("response","time to reset duration reached, resetting the circuit breaker for key: "+key);
+	    		logger.info("time to reset duration reached, resetting the circuit breaker for key: "+key);
+  		}
+  		
+  		else if(counter < mec) {
+  			updatedkeyvalue=counter + "|" + mec + "|"  + ocd + "|" + ttr + "|" + fet + "|" + let + "|closed";
+	    		store.update(key, updatedkeyvalue);
+  			response.put("state","closed");
+      		response.put("response","continue normal execution");
+      		//logger.info("circuit breaker is in CLOSED state, commencing normal execution for key :" +key);
+      		}
+  		
+  		else if(counter >= mec) {
+  			if(ocd == -1) {
+  				updatedkeyvalue=counter + "|" + mec + "|"  + ocd + "|" + ttr + "|" + fet + "|" + let + "|open";
+  	    		store.update(key, updatedkeyvalue);
+				response.put("state","open");
+	    		response.put("response","execution will be stopped for key: " +key);
+	    		logger.info("execution will be stopped for key: " +key);
+			}
+  			
+  		else if(System.currentTimeMillis() - let < ocd) {
+  				updatedkeyvalue=counter + "|" + mec + "|"  + ocd + "|" + ttr + "|" + fet + "|" + let + "|open";
+  	    		store.update(key, updatedkeyvalue);
+  	    		long timenow=System.currentTimeMillis();
+  				response.put("state","open");
+  	    		response.put("response","execution is stopped for key: " +key + " for duration : " + convertToFormattedString((ocd+let) - timenow));
+  	    		logger.info("execution is stopped for key: " +key + " for duration : " + convertToFormattedString((ocd+let) - timenow));
+  			}
+  			else if(System.currentTimeMillis() - let >= ocd) {
+  				updatedkeyvalue=0 + "|" + mec + "|"  + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|closed";
+  				store.update(key, updatedkeyvalue);
+  				response.put("state","closed");
+  	    		response.put("response","open circuit duration is reached, commencing normal execution for key :" +key);
+  	    		logger.info("open circuit duration is reached, commencing normal execution for key :" +key);
+  			}
+  			
+  		}
+  		
+  	}
+  	}catch(Exception e) {
+  		response.put("state","unknown");
+  		response.put("response",e.getMessage());
+  		logger.warning("Error : " +e.getMessage());
+  	}
+  	return response;
+  }
+  
+  /**
+   * Increment the counter value.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Incrementing the error counter value")
+  public void IncrementErrorCount(@Alias("Path") @Summary("Path to cb key property") String path,@Alias("Key") @Summary("given Key")String key,@Alias("Incriment") @Summary("Incrimental value, e.g.: 1") long incriment){
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	//CircuitBreaker store = new CircuitBreaker("cb_value_store.properties");
+    	String updatedkeyvalue="";
+  	if(store.get(key)== null) {
+  		
+  		logger.warning("Could not find the key: " +key);
+
+  	}else {
+  		String keyvalue=store.get(key);
+  		
+  		String[] splitvalues=keyvalue.split("\\|");
+  		long counter=Long.parseLong(splitvalues[0]);
+  		long mec=Long.parseLong(splitvalues[1]);
+  		long ocd=Long.parseLong(splitvalues[2]);
+  		long ttr=Long.parseLong(splitvalues[3]);
+  		long fet=Long.parseLong(splitvalues[4]);
+  		long let=Long.parseLong(splitvalues[5]);
+  		String state=splitvalues[6];
+  		
+  		long increasedval=Long.sum(counter, incriment);
+  		if(fet == 0) {
+  			updatedkeyvalue = increasedval + "|" + mec + "|" + ocd + "|" + ttr + "|" + System.currentTimeMillis() + "|" + System.currentTimeMillis() + "|" + state;
+  			store.update(key, updatedkeyvalue);
+  			logger.info("Counter incrimented, counter is : " +increasedval + " out of " +mec);
+
+  		}
+  		else if(counter < mec) {
+  			updatedkeyvalue = increasedval + "|" + mec + "|" + ocd + "|" + ttr + "|" + fet + "|" + System.currentTimeMillis() + "|" + state;
+  			store.update(key, updatedkeyvalue);
+  			logger.info("Counter incrimented, counter is : " +increasedval + " out of " +mec);
+  		}
+  		else {
+  			
+  			logger.warning("Error count threshold already reached for key :" +key);
+  		}
+  	}
+  }
+  	
+  
+  
+  /**
+   * Reset the counter value.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Reset the counter value")
+  public void ResetKey(@Alias("Path") @Summary("Path to key property") String path,@Alias("Key") @Summary("Key to reset")String key){
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	
+  	if(store.get(key)== null) {
+  		logger.warning("Could not find the key: " +key);
+
+  	}else {
+  		
+  		String keyvalue=store.get(key);
+  		
+  		String[] splitvalues=keyvalue.split("\\|");
+  		
+  		long mec=Long.parseLong(splitvalues[1]);
+  		long ocd=Long.parseLong(splitvalues[2]);
+  		long ttr=Long.parseLong(splitvalues[3]);
+  		
+  		String defltkeyvalue=0 + "|" + mec + "|" + ocd + "|" + ttr + "|" + 0 + "|" + 0 + "|" + "closed";
+  
+  		store.update(key, defltkeyvalue);
+  		logger.info("Reseted the key: " +key);
+  		
+  	}
+  	
+  }
+ 
+  /**
+   * Deleted the key.
+   */
+  @MediaType(value = ANY, strict = false)
+  @Summary("Delete the key")  
+public void DeleteKey(@Alias("Path") @Summary("Path to key property") String path,@Alias("Key") @Summary("Key to delete")String key){
+	  CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+  	
+  	if(store.get(key)== null) {
+  		logger.warning("Could not find a key: " +key);
+
+  	}else {
+  		
+  		store.delete(key);
+  		logger.info("Deleted the key: " +key);
+  		
+  	}
+  }
+  	
+  	/**
+     * Update the values of the key.
+     */
+  /*  @MediaType(value = ANY, strict = false)
+    @Summary("Update the key")  
+  public void UpdateKey(@Alias("Path") @Summary("Path to store key property") String path, @Alias("Key") @Summary("Key to update") String key,@Alias("MaximumErrorCount") @Optional @Summary("new maximum error count") long errorcount,@Alias("TimeUnit") @Optional(defaultValue = "Miliseconds") ExtValueProvider timeunit,@Alias("OpenCircuitDuration") @Optional @Summary("new Open circuit duration") long OCD, @Optional @Alias("TimeToReset")@Summary("new Time to restet") long TTR){
+    	CircuitbreakerOperations store = new CircuitbreakerOperations(path+"/cb_value_store.properties");
+    	
+    	if(store.get(key)== null) {
+    		logger.warning("Could not find a key: " +key);
+
+    	}else {
+    		
+    		String keyvalue=store.get(key);
+      		
+    		String[] splitvalues=keyvalue.split("\\|");
+    		long counter=Long.parseLong(splitvalues[0]);
+      		long mec=Long.parseLong(splitvalues[1]);
+      		long ocd=Long.parseLong(splitvalues[2]);
+      		long ttr=Long.parseLong(splitvalues[3]);
+      		long fet=Long.parseLong(splitvalues[4]);
+      		long let=Long.parseLong(splitvalues[5]);
+      		String state=splitvalues[6];
+      		
+      		
+      		long newOCD=convertToMilliseconds(OCD,timeunit.getextsn());
+      		long newTTR=convertToMilliseconds(TTR,timeunit.getextsn());
+      		
+      		String updatedkey=counter + "|" + UpdateUtil(mec,errorcount) + "|" + UpdateUtil(ocd,newOCD) + "|" + UpdateUtil(ttr,newTTR) + "|" + fet + "|" + let + "|" + state;
+      		
+      		store.update(key, updatedkey);
+      		logger.info("Updated the key: " +key);
+    		
+    	}
+  	
+  } */
+ 
+  
+  /*
+   * Utility methods
+   * 
+   * */
+  
+// Update current value with new value
+    
+    private static Long UpdateUtil(Long oldVal, Long newVal) {
+        if (newVal == null || newVal.equals(oldVal)) {
+            return oldVal;
+        }
+        return newVal;
+    }
+    
+    
+    
+    
+    
+    
+// Converts the given time value to milliseconds based on the specified time unit.
+  
+  private static long convertToMilliseconds(long timeValue, String timeUnit) {
+	  
+	  
+	  
+ //logger.info(timeValue +" :: "+ timeUnit);
+	  if(timeValue == -1) return -1;
+    	  switch (timeUnit) {
+    	  
+          case "Miliseconds":
+        	  return  timeValue;
+          case "Seconds":
+        	  return timeValue * 1000;
+          case "Minutes":
+        	  return timeValue * 60 * 1000;
+          case "Hours":
+        	  return timeValue * 60 * 60 * 1000;
+          case "Days":
+        	  return  timeValue * 24 * 60 * 60 * 1000;
+          default:
+        	  return (long) 100000;
+      }
+    
+      
+  }
+  
+  // Converts milliseconds to a formatted string in the format DD:HH:MM:MS
+  
+  private static String convertToFormattedString(long milliseconds) {
+	    //System.out.println("val to format time: " + milliseconds);
+	    long totalSeconds = milliseconds / 1000;
+	    long ms = milliseconds % 1000;
+	    
+	    long days = totalSeconds / (24 * 3600);
+	    totalSeconds %= (24 * 3600);
+	    
+	    long hours = totalSeconds / 3600;
+	    totalSeconds %= 3600;
+	    
+	    long minutes = totalSeconds / 60;
+	    long seconds = totalSeconds % 60;
+	    
+	    // Format the result as DD:HH:MM:SS:MS
+	    return String.format("%02d Days %02d Hrs %02d Mins %02d Secs %03d ms",days, hours, minutes, seconds, ms);
+	}
+  
+  
+
+  
+  
+}
